@@ -1,0 +1,32 @@
+plugins {
+    id 'java'
+    id 'application'
+
+
+}
+
+group 'org.example'
+version '1.0-SNAPSHOT'
+
+ext {
+    gsonVersion = '2.10.1'
+    httpClientVersion = '4.5.14'
+}
+
+repositories {
+    mavenCentral()
+}
+dependencies {
+    // Only keep essential dependencies
+    implementation 'org.apache.httpcomponents:httpclient:4.5.13'
+    implementation 'com.google.code.gson:gson:2.8.9'
+    implementation 'org.jsoup:jsoup:1.15.3' // For lyrics scraping
+        implementation "com.google.code.gson:gson:$gsonVersion"
+    implementation "org.apache.httpcomponents:httpclient:$httpClientVersion"
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+application {
+    mainClass = 'com.genius.App'
+
+}
