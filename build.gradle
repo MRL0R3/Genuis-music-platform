@@ -18,9 +18,9 @@ repositories {
 }
 dependencies {
     // Only keep essential dependencies
-    implementation 'org.apache.httpcomponents:httpclient:4.5.13'
-    implementation 'com.google.code.gson:gson:2.8.9'
-    implementation 'org.jsoup:jsoup:1.15.3' // For lyrics scraping
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'org.apache.httpcomponents:httpclient:4.5.14'
+    implementation 'org.jsoup:jsoup:1.16.1'
         implementation "com.google.code.gson:gson:$gsonVersion"
     implementation "org.apache.httpcomponents:httpclient:$httpClientVersion"
         testImplementation 'org.junit.jupiter:junit-jupiter'

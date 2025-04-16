@@ -9,12 +9,14 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 public class SongService {
+    private final ExecutorService executorService;
     private final Database database;
     private final GeniusAPIService geniusAPI;
     private final Map<Integer, Song> geniusIdToSongMap;
@@ -23,15 +25,8 @@ public class SongService {
     public SongService(Database database, GeniusAPIService geniusAPI) {
         this.database = database;
         this.geniusAPI = geniusAPI;
+        this.executorService = Executors.newFixedThreadPool(3); // Adjust thread count as needed
         this.geniusIdToSongMap = new HashMap<>();
-    }
-
-    private void initializeCache() {
-        synchronized (database) {
-            database.getSongs().stream()
-                    .filter(song -> song.getGeniusId() != null)
-                    .forEach(song -> geniusIdToSongMap.put(song.getGeniusId(), song));
-        }
     }
 
     public void importSongsFromGenius(String searchQuery) {
@@ -74,40 +69,50 @@ public class SongService {
 
     private void processSongData(JsonObject songData) {
         try {
+            // Parse song data from JSON
+            int geniusId = songData.get("id").getAsInt();
 
-            Integer geniusId = songData.get("id").getAsInt();
-
-            // Skip if already exists
+            // Check if song already exists
             if (geniusIdToSongMap.containsKey(geniusId)) {
-                System.out.println("✓ " + songData.get("title").getAsString() + " already exists");
                 return;
             }
 
-            String title = getStringOrEmpty(songData, "title");
-            String artistName = getStringOrEmpty(songData.getAsJsonObject("primary_artist"), "name");
-            String thumbnailUrl = getStringOrEmpty(songData.getAsJsonObject("song_art_image_url"), "thumbnail");
+            String title = songData.get("title").getAsString();
+            String path = songData.get("path").getAsString();
+            JsonObject primaryArtist = songData.getAsJsonObject("primary_artist");
+            String artistName = primaryArtist.get("name").getAsString();
 
+            // Get or create artist
             Artist artist = findOrCreateArtist(artistName);
+
+            // Create song with placeholder lyrics
             Song song = new Song(
                     title,
-                    "Lyrics loading...", // Placeholder
-                    List.of(artist),
+                    "Loading lyrics...", // Placeholder
+                    Collections.singletonList(artist),
                     determineGenre(songData),
-                    new Date(), // Current date as plawceholder
+                    new Date(),
                     geniusId,
-                    thumbnailUrl
+                    songData.has("song_art_image_url") ?
+                            songData.getAsJsonObject("song_art_image_url").get("thumbnail").getAsString() : null
             );
 
-            synchronized (database) {
-                database.addSong(song);
-                artist.getSongs().add(song);
-                geniusIdToSongMap.put(geniusId, song);
-            }
-
-            System.out.println("✓ Added " + title + " by " + artistName);
+            // Cache and store the song
+            geniusIdToSongMap.put(geniusId, song);
+            database.addSong(song);
+            artist.addSong(song);
 
             // Fetch lyrics in background
-            executorService.submit(() -> fetchAndStoreLyrics(song));
+            executorService.submit(() -> {
+                try {
+                    String lyrics = geniusAPI.getLyrics(path);
+                    song.setLyrics(lyrics != null ? lyrics : "Lyrics not available");
+                } catch (Exception e) {
+                    System.err.println("Error fetching lyrics for " + title + ": " + e.getMessage());
+                    song.setLyrics("Error loading lyrics");
+                }
+            });
+
         } catch (Exception e) {
             System.err.println("Error processing song data: " + e.getMessage());
         }
@@ -151,7 +156,16 @@ public class SongService {
     private void fetchAndStoreLyrics(Song song) {
         try {
             System.out.println("Fetching lyrics for: " + song.getTitle());
-            String lyrics = geniusAPI.getLyrics(song.getGeniusId());
+
+            // Get the song path from Genius API first
+            JsonObject songDetails = geniusAPI.getSongDetails(song.getGeniusId());
+            String path = songDetails.getAsJsonObject("response")
+                    .getAsJsonObject("song")
+                    .get("path").getAsString();
+
+            // Then fetch lyrics using the path
+            String lyrics = geniusAPI.getLyrics(path);
+
             synchronized (song) {
                 song.setLyrics(lyrics != null ? lyrics : "Lyrics not available");
             }
@@ -159,11 +173,10 @@ public class SongService {
         } catch (Exception e) {
             System.err.println("Failed to get lyrics for " + song.getTitle() + ": " + e.getMessage());
             synchronized (song) {
-                song.setLyrics("Could not load lyrics: " + e.getMessage());
+                song.setLyrics("Could not load lyrics");
             }
         }
     }
-
     private Artist findOrCreateArtist(String name) {
         if (name == null || name.trim().isEmpty()) {
             name = "Unknown Artist";
@@ -218,85 +231,71 @@ public class SongService {
     }
 
     public List<Song> searchSongs(String query) {
+        List<Song> songs = new ArrayList<>();
         try {
             JsonObject response = geniusAPI.search(query);
             JsonArray hits = response.getAsJsonObject("response").getAsJsonArray("hits");
 
-            List<Song> results = new ArrayList<>();
             for (JsonElement hit : hits) {
                 JsonObject result = hit.getAsJsonObject().getAsJsonObject("result");
                 if (result != null && "song".equals(result.get("type").getAsString())) {
                     Song song = createSongFromApiResult(result);
                     if (song != null) {
-                        results.add(song);
+                        songs.add(song);
                     }
                 }
             }
-            return results;
         } catch (Exception e) {
-            System.err.println("Error searching songs: " + e.getMessage());
-            return Collections.emptyList();
+            System.err.println("Error in searchSongs: " + e.getMessage());
         }
+        return songs;
     }
 
-
-    private Song createSongFromApiResult(JsonObject songData) {
+    public Song createSongFromApiResult(JsonObject songData) {
         try {
             int geniusId = songData.get("id").getAsInt();
-
-            // Check if we already have this song
-            if (geniusIdToSongMap.containsKey(geniusId)) {
-                return geniusIdToSongMap.get(geniusId);
-            }
-
             String title = songData.get("title").getAsString();
             String path = songData.get("path").getAsString();
 
-            // Get primary artist
-            JsonObject primaryArtist = songData.getAsJsonObject("primary_artist");
-            String artistName = primaryArtist.get("name").getAsString();
+            // Get or create artist
+            JsonObject artistJson = songData.getAsJsonObject("primary_artist");
+            Artist artist = findOrCreateArtist(artistJson.get("name").getAsString());
 
-            // Create or get artist
-            Artist artist = findOrCreateArtist(artistName);
-
-            // Get thumbnail URL if available
-            String thumbnailUrl = null;
-            if (songData.has("song_art_image_url")) {
-                thumbnailUrl = songData.getAsJsonObject("song_art_image_url").get("thumbnail").getAsString();
-            }
-
-            // Create song with placeholder lyrics
+            // Create song
             Song song = new Song(
                     title,
-                    "Loading lyrics...", // Will be loaded separately
+                    "Loading lyrics...",
                     Collections.singletonList(artist),
                     determineGenre(songData),
-                    new Date(), // Placeholder release date
+                    new Date(),
                     geniusId,
-                    thumbnailUrl
+                    songData.has("song_art_image_url") ?
+                            songData.getAsJsonObject("song_art_image_url").get("thumbnail").getAsString() : null
             );
 
             // Load lyrics in background
-            new Thread(() -> {
+            executorService.submit(() -> {
                 try {
                     String lyrics = geniusAPI.getLyrics(path);
-                    song.setLyrics(lyrics);
+                    song.setLyrics(lyrics != null ? lyrics : "Lyrics not available");
                 } catch (Exception e) {
-                    song.setLyrics("Could not load lyrics");
+                    song.setLyrics("Error loading lyrics");
                 }
-            }).start();
-
-            // Cache the song
-            geniusIdToSongMap.put(geniusId, song);
-            database.addSong(song);
-            artist.addSong(song);
+            });
 
             return song;
         } catch (Exception e) {
-            System.err.println("Error creating song from API data: " + e.getMessage());
+            System.err.println("Error creating song: " + e.getMessage());
             return null;
         }
     }
+
+    // Helper method for safe JSON access
+    private String safeGetString(JsonObject obj, String key) {
+        JsonElement elem = obj.get(key);
+        return elem != null && !elem.isJsonNull() ? elem.getAsString() : null;
+    }
+
 
 
     public void addViewToSong(Song song) {
@@ -319,5 +318,6 @@ public class SongService {
     public GeniusAPIService getGeniusAPI() {
         return this.geniusAPI;
     }
+
 
 }
