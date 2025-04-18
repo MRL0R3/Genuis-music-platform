@@ -99,7 +99,7 @@ Key Functionalities
 
 * Core: Java 17
 
-* Build: Maven
+* Build: Gradle
 
 * Security: PBKDF2 password hashing
 
