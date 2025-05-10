@@ -45,10 +45,10 @@ public class AccountService {
         if (admin == null || artist == null) {
             return false;
         }
-        
         artist.setVerified(true);
         database.removeArtistForApproval(artist);
-        
+        database.addAccount(artist); // Re-add to ensure sync
+
         // Notify the artist
         database.addArtistNotification(artist, 
             "Your account has been verified by admin " + admin.getName());
@@ -68,40 +68,8 @@ public class AccountService {
         return user.getFollowing();
     }
 
-    // Get new releases from followed artists
-    public List<Song> getNewReleasesFromFollowedArtists(User user, int limit) {
-        if (user == null) {
-            return new ArrayList<>();
-        }
-        
-        return user.getFollowing().stream()
-                .flatMap(artist -> artist.getSongs().stream())
-                .sorted((s1, s2) -> s2.getReleaseDate().compareTo(s1.getReleaseDate()))
-                .limit(limit)
-                .collect(Collectors.toList());
-    }
-
     // Search accounts
-    public List<User> searchUsers(String query) {
-        return database.getAccounts().stream()
-                .filter(account -> account instanceof User)
-                .map(account -> (User) account)
-                .filter(user -> 
-                    user.getUsername().toLowerCase().contains(query.toLowerCase()) || 
-                    user.getName().toLowerCase().contains(query.toLowerCase()))
-                .collect(Collectors.toList());
-    }
 
-    public List<Artist> searchArtists(String query) {
-        return database.getAccounts().stream()
-                .filter(account -> account instanceof Artist)
-                .map(account -> (Artist) account)
-                .filter(artist -> artist.isVerified())
-                .filter(artist -> 
-                    artist.getUsername().toLowerCase().contains(query.toLowerCase()) || 
-                    artist.getName().toLowerCase().contains(query.toLowerCase()))
-                .collect(Collectors.toList());
-    }
 
     // Get notifications for a user
     public List<String> getUserNotifications(User user) {
