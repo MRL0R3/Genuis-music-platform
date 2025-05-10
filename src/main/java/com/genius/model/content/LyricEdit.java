@@ -45,7 +45,6 @@ public class LyricEdit {
     public String getOriginalLyrics() { return originalLyrics; }
     public String getProposedLyrics() { return proposedLyrics; }
     public String getExplanation() { return explanation; }
-    public Date getSuggestedDate() { return suggestedDate; }
     public boolean isApproved() { return approved; }
     public boolean isRejected() { return rejected; }
     public Artist getReviewedBy() { return reviewedBy; }

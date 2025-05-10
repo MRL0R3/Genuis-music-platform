@@ -4,10 +4,6 @@ import com.genius.model.accounts.User;
 import java.util.Date;
 import java.util.Objects;
 
-/**
- * Represents a comment made by a user on a song in the Genius music platform.
- * Comments allow users to discuss and interpret song lyrics.
- */
 public class Comment {
     private final User user;
     private final String text;
