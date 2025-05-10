@@ -1,8 +1,9 @@
 package com.genius.model.accounts;
 
 import com.genius.model.enums.Role;
-
-public abstract class Account {
+import java.io.Serializable;
+public abstract class Account implements Serializable {
+    private static final long serialVersionUID = 1L;
     private String username;
     private String password;
     private String name;
