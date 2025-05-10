@@ -54,6 +54,7 @@ public class PasswordHasher {
      */
     public static boolean verify(String password, String storedHash) {
         try {
+
             // Split the stored hash into salt and hash components
             String[] parts = storedHash.split(DELIMITER);
             if (parts.length != 2) {
