@@ -10,6 +10,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -117,23 +119,35 @@ public class SongService {
             System.err.println("Error processing song data: " + e.getMessage());
         }
     }
+
     public Song createSong(String title, String lyrics, Artist artist,
                            Genre genre, Date releaseDate, Integer geniusId,
                            String thumbnailUrl) {
-        if (title == null || artist == null || genre == null || releaseDate == null) {
-            throw new IllegalArgumentException("Required song parameters cannot be null");
-        }
 
-        Song song = new Song(title, lyrics, List.of(artist), genre, releaseDate,
-                geniusId, thumbnailUrl);
-        database.getSongs().add(song);
-        artist.getSongs().add(song);
+        // Validate inputs
+        Objects.requireNonNull(title, "Title cannot be null");
+        Objects.requireNonNull(artist, "Artist cannot be null");
+        Objects.requireNonNull(genre, "Genre cannot be null");
+        Objects.requireNonNull(releaseDate, "Release date cannot be null");
+
+        // Create song
+        Song song = new Song(
+                title,
+                lyrics != null ? lyrics : "",
+                Collections.singletonList(artist), // Safe for single artist
+                genre,
+                new Date(releaseDate.getTime()), // Defensive copy
+                geniusId,
+                thumbnailUrl
+        );
+
+        // Add to collections
+        database.addSong(song);
+        artist.addSong(song); // This now works with the modified Artist class
+
         return song;
     }
-    private String getStringOrEmpty(JsonObject obj, String key) {
-        if (obj == null || !obj.has(key)) return "";
-        return obj.get(key).getAsString();
-    }
+
 
     private Genre determineGenre(JsonObject songData) {
         try {
@@ -213,23 +227,6 @@ public class SongService {
         return artist;
     }
 
-    // Search helper methods
-    private boolean matchesQuery(Song song, String query) {
-        if (query == null || query.isEmpty()) return true;
-        String lowerQuery = query.toLowerCase();
-        return (song.getTitle() != null && song.getTitle().toLowerCase().contains(lowerQuery)) ||
-                (song.getLyrics() != null && song.getLyrics().toLowerCase().contains(lowerQuery));
-    }
-
-    private boolean matchesGenre(Song song, Genre genre) {
-        return genre == null || song.getGenre() == genre;
-    }
-
-    private boolean matchesArtist(Song song, Artist artist) {
-        return artist == null ||
-                (song.getArtists() != null && song.getArtists().contains(artist));
-    }
-
     public List<Song> searchSongs(String query) {
         List<Song> songs = new ArrayList<>();
         try {
@@ -280,6 +277,7 @@ public class SongService {
                     song.setLyrics(lyrics != null ? lyrics : "Lyrics not available");
                 } catch (Exception e) {
                     song.setLyrics("Error loading lyrics");
+                    System.err.println("Failed to process thumbnail: " + e.getMessage());
                 }
             });
 
@@ -287,22 +285,6 @@ public class SongService {
         } catch (Exception e) {
             System.err.println("Error creating song: " + e.getMessage());
             return null;
-        }
-    }
-
-    // Helper method for safe JSON access
-    private String safeGetString(JsonObject obj, String key) {
-        JsonElement elem = obj.get(key);
-        return elem != null && !elem.isJsonNull() ? elem.getAsString() : null;
-    }
-
-
-
-    public void addViewToSong(Song song) {
-        if (song != null) {
-            synchronized (song) {
-                song.setViews(song.getViews() + 1);
-            }
         }
     }
 
