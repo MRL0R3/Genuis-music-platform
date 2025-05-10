@@ -12,6 +12,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import java.net.MalformedURLException;
+import java.net.URL;
+
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.text.ParseException;
@@ -20,6 +23,11 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 public class CLI {
+
+    private final Map<Integer, Artist> artistsCache = new HashMap<>();
+
+    private final Map<Integer, Song> chartsCache = new HashMap<>();
+    private final Map<Integer, Song> songsCache = new HashMap<>();
     private final SongService songService;
     private final ExecutorService executorService;
     private GeniusAPIService geniusAPI;
@@ -201,175 +209,81 @@ public class CLI {
     }
 
     // ========== Song Methods ==========
+//    modify the browseSongs() method
+
     private void browseSongs() {
-        System.out.println("\n--- Browse Popular Songs ---");
+        System.out.println("\n--- Browse Popular Songs (From Genius API) ---");
+
         try {
-            // Use a more reliable search query
-            JsonObject response = geniusAPI.search("top+songs+2023");
+            JsonObject response = geniusAPI.search("popular");
+            JsonArray hits = response.getAsJsonObject("response").getAsJsonArray("hits");
 
-            if (response == null) {
-                System.out.println("❌ No response received from Genius API");
-                return;
-            }
-
-            JsonObject responseObj = safeGetJsonObject(response, "response");
-            if (responseObj == null) {
-                System.out.println("❌ Invalid API response format");
-                return;
-            }
-
-            JsonArray hits = safeGetJsonArray(responseObj, "hits");
             if (hits == null || hits.size() == 0) {
-                System.out.println("🔍 No songs found. Try a different search term.");
+                System.out.println("No popular songs found.");
                 return;
             }
 
-            List<Song> songs = new ArrayList<>();
-            for (JsonElement hit : hits) {
+            System.out.println("\n🎵 Popular Songs from Genius:");
+            System.out.println("┌──────┬──────────────────────────────────────┬──────────────────────────┬────────────┐");
+            System.out.println("│ Rank │ Title                                │ Artist                   │ Views      │");
+            System.out.println("├──────┼──────────────────────────────────────┼──────────────────────────┼────────────┤");
+
+            songsCache.clear();
+
+            for (int i = 0; i < hits.size(); i++) {
                 try {
-                    JsonObject hitObj = hit.getAsJsonObject();
-                    JsonObject result = safeGetJsonObject(hitObj, "result");
+                    JsonObject hit = hits.get(i).getAsJsonObject();
+                    JsonObject result = hit.getAsJsonObject("result");
 
-                    // Basic validation - must have result and be type song
-                    if (result == null || !"song".equals(safeGetString(result, "type"))) {
-                        continue;
-                    }
+                    String title = result.get("title").getAsString();
+                    String artist = result.getAsJsonObject("primary_artist")
+                            .get("name").getAsString();
+                    int views = result.has("stats")
+                            ? result.getAsJsonObject("stats").get("pageviews").getAsInt()
+                            : 0;
 
-                    // Get title with fallback
-                    String title = cleanString(safeGetString(result, "title"));
-                    if (title == null || title.isEmpty()) {
-                        title = "Unknown Track";
-                    }
+                    System.out.printf("│ %4d │ %-36s │ %-24s │ %10s │\n",
+                            i+1,
+                            truncate(title, 35),
+                            truncate(artist, 23),
+                            formatNumber(views));
 
-                    // Get artist with better handling of special characters
-                    String artistName = "Unknown Artist";
-                    JsonObject primaryArtist = safeGetJsonObject(result, "primary_artist");
-                    if (primaryArtist != null) {
-                        artistName = cleanString(safeGetString(primaryArtist, "name"));
-                        if (artistName == null || artistName.isEmpty()) {
-                            artistName = "Unknown Artist";
-                        }
-                    }
-
-                    // Get other fields with fallbacks
-                    String path = safeGetString(result, "path");
-                    String songId = safeGetString(result, "id");
-                    String thumbnailUrl = safeGetString(result, "song_art_image_thumbnail_url");
-
-                    // Create temporary artist
-                    Artist tempArtist = new Artist(
-                            artistName.toLowerCase().replaceAll("[^a-z0-9]", "_"),
-                            "temp_pass",
-                            artistName,
-                            30,
-                            artistName.toLowerCase() + "@genius.com"
-                    );
-                    tempArtist.setVerified(true);
-
-                    // Create song
+                    // Cache the song data for potential detail viewing
                     Song song = new Song(
                             title,
                             "Loading lyrics...",
-                            Collections.singletonList(tempArtist),
+                            Collections.singletonList(new Artist(
+                                    artist.toLowerCase().replaceAll("\\W+", "_"),
+                                    "temp_pass",
+                                    artist,
+                                    30,
+                                    artist.toLowerCase() + "@genius.com"
+                            )),
                             determineGenre(result),
-                            parseReleaseDate(result),
-                            songId != null ? Integer.parseInt(songId) : 0,
-                            thumbnailUrl
+                            new Date(),
+                            result.get("id").getAsInt(),
+                            result.has("song_art_image_url")
+                                    ? result.get("song_art_image_url").getAsString()
+                                    : null
                     );
-
-                    songs.add(song);
-
-                    // Fetch lyrics if we have a path
-                    if (path != null && !path.isEmpty()) {
-                        executorService.submit(() -> {
-                            try {
-                                String lyrics = geniusAPI.getLyrics(path);
-                                song.setLyrics(lyrics != null ?
-                                        lyrics : "Lyrics not available");
-                            } catch (Exception e) {
-                                song.setLyrics("Error loading lyrics");
-                            }
-                        });
-                    } else {
-                        song.setLyrics("Lyrics path not available");
-                    }
+                    song.setViews(views);
+                    songsCache.put(i+1, song);
 
                 } catch (Exception e) {
-                    System.err.println("⚠️ Error processing song entry: " + e.getMessage());
-                    continue;
+                    continue; // Skip invalid entries
                 }
             }
 
-            // Display results
-            if (songs.isEmpty()) {
-                System.out.println("🎵 No songs could be processed");
-                System.out.println("ℹ️ Try a different search term or check API response format");
-                return;
-            }
-
-            System.out.println("\n🎶 Popular Songs (" + songs.size() + "):");
-            for (int i = 0; i < songs.size(); i++) {
-                Song song = songs.get(i);
-                String artistName = song.getArtists().isEmpty() ?
-                        "Unknown Artist" : song.getArtists().get(0).getName();
-
-                System.out.printf("%2d. %-40s - %-25s%n",
-                        i + 1,
-                        truncate(song.getTitle(), 40),
-                        truncate(artistName, 25));
-            }
-
-            // Allow song selection
+            System.out.println("└──────┴──────────────────────────────────────┴──────────────────────────┴────────────┘");
             System.out.print("\nEnter song number to view details (0 to go back): ");
+
             int choice = readIntInput();
-            if (choice > 0 && choice <= songs.size()) {
-                Song selectedSong = songs.get(choice - 1);
-
-                // Wait for lyrics to load if needed
-                if (selectedSong.getLyrics().equals("Loading lyrics...")) {
-                    System.out.print("\n⏳ Loading lyrics... ");
-                    while (selectedSong.getLyrics().equals("Loading lyrics...")) {
-                        Thread.sleep(500);
-                    }
-                    System.out.println("Done!");
-                }
-
-                viewSongDetails(selectedSong);
-            }
-
-        } catch (Exception e) {
-            System.err.println("❌ Error browsing songs: " + e.getMessage());
-        }
-    }
-
-    // Helper method to clean special characters
-    private String cleanString(String input) {
-        if (input == null) return null;
-        // Remove Unicode control characters
-        return input.replaceAll("[\\p{C}]", "").trim();
-    }
-
-    // Helper method to parse release date
-    private Date parseReleaseDate(JsonObject songData) {
-        try {
-            JsonObject dateComponents = safeGetJsonObject(songData, "release_date_components");
-            if (dateComponents != null) {
-                int year = dateComponents.get("year").getAsInt();
-                int month = dateComponents.has("month") ? dateComponents.get("month").getAsInt() : 1;
-                int day = dateComponents.has("day") ? dateComponents.get("day").getAsInt() : 1;
-                return new GregorianCalendar(year, month - 1, day).getTime();
+            if (choice > 0 && choice <= songsCache.size()) {
+                viewSongDetails(songsCache.get(choice));
             }
         } catch (Exception e) {
-            System.err.println("⚠️ Error parsing release date: " + e.getMessage());
+            System.out.println("Unable to load popular songs from Genius API.");
         }
-        return new Date(); // Default to current date
-    }
-
-
-    // Helper method to truncate long text
-    private String truncate(String text, int length) {
-        if (text == null) return "";
-        return text.length() > length ? text.substring(0, length - 3) + "..." : text;
     }
 
     // Helper method to determine genre
@@ -555,39 +469,42 @@ public class CLI {
     // ========== Artist Methods ==========
     private void browseArtists() {
         System.out.println("\n--- Browse Popular Artists ---");
+
         try {
             JsonObject response = geniusAPI.searchArtists("popular");
-            if (response == null) {
-                System.out.println("No response from API");
-                return;
-            }
-
-            JsonObject responseObj = safeGetJsonObject(response, "response");
-            JsonArray hits = safeGetJsonArray(responseObj, "hits");
+            JsonArray hits = response.getAsJsonObject("response").getAsJsonArray("hits");
 
             if (hits == null || hits.size() == 0) {
-                System.out.println("No artists found");
+                System.out.println("No popular artists found.");
                 return;
             }
 
-            List<Artist> artists = new ArrayList<>();
-            for (JsonElement hit : hits) {
+            // Clear the console before showing formatted output
+            System.out.print("\033[H\033[2J");  // Clears console
+            System.out.flush();
+
+            System.out.println("✔ Top Artists:");
+            System.out.println("┌──────┬──────────────────────────┬──────────────────────┐");
+            System.out.println("│ Rank │ Artist Name              │ Verification Status  │");
+            System.out.println("├──────┼──────────────────────────┼──────────────────────┤");
+
+            artistsCache.clear();
+
+            for (int i = 0; i < hits.size(); i++) {
                 try {
-                    JsonObject hitObj = hit.getAsJsonObject();
-                    JsonObject result = safeGetJsonObject(hitObj, "result");
+                    JsonObject hit = hits.get(i).getAsJsonObject();
+                    JsonObject result = hit.getAsJsonObject("result");
+                    JsonObject artistObj = result.getAsJsonObject("primary_artist");
 
-                    if (result == null || !"artist".equals(safeGetString(result, "type"))) {
-                        continue;
-                    }
+                    String name = artistObj.get("name").getAsString();
+                    boolean verified = artistObj.get("is_verified").getAsBoolean();
 
-                    String name = safeGetString(result, "name");
-                    String id = safeGetString(result, "id");
-                    String imageUrl = safeGetString(result, "image_url");
+                    System.out.printf("│ %4d │ %-24s │ %-20s │\n",
+                            i+1,
+                            truncate(name, 23),
+                            verified ? "✓ Verified" : "✗ Unverified");
 
-                    if (name == null || id == null) {
-                        continue;
-                    }
-
+                    // Cache the artist data
                     Artist artist = new Artist(
                             name.toLowerCase().replaceAll("\\W+", "_"),
                             "temp_pass",
@@ -595,35 +512,28 @@ public class CLI {
                             30,
                             name.toLowerCase() + "@genius.com"
                     );
-                    artist.setGeniusId(id);
-                    artist.setImageUrl(imageUrl);
-                    artist.setVerified(true);
+                    artist.setVerified(verified);
+                    artist.setGeniusId(String.valueOf(artistObj.get("id").getAsInt()));
+                    artistsCache.put(i+1, artist);
 
-                    artists.add(artist);
                 } catch (Exception e) {
-                    System.err.println("Error processing artist: " + e.getMessage());
-                    continue;
+                    continue; // Skip invalid entries
                 }
             }
 
-            if (artists.isEmpty()) {
-                System.out.println("No valid artists found");
-                return;
-            }
-
-            for (int i = 0; i < artists.size(); i++) {
-                System.out.println((i + 1) + ". " + artists.get(i).getName());
-            }
-
+            System.out.println("└──────┴──────────────────────────┴──────────────────────┘");
             System.out.print("\nEnter artist number to view details (0 to go back): ");
+
             int choice = readIntInput();
-            if (choice > 0 && choice <= artists.size()) {
-                viewArtistDetails(artists.get(choice - 1));
+            if (choice > 0 && choice <= artistsCache.size()) {
+                viewArtistDetails(artistsCache.get(choice));
             }
         } catch (Exception e) {
-            System.err.println("Error browsing artists: " + e.getMessage());
+            System.out.println("Unable to load popular artists.");
         }
     }
+
+
     private void viewArtistDetails(Artist artist) {
         System.out.println("\n--- " + artist.getName() + " ---");
         System.out.println("Songs: " + artist.getSongs().size());
@@ -689,113 +599,149 @@ public class CLI {
     // ========== Chart Methods ==========
     private void showTopCharts() {
         System.out.println("\n--- Top Charts ---");
+
         try {
+            // Try to get charts from API (no response logging)
             JsonObject charts = geniusAPI.getChartSongs();
-            if (charts == null) {
-                System.out.println("No response from API");
-                return;
-            }
 
-            JsonObject response = safeGetJsonObject(charts, "response");
-            JsonArray songs = safeGetJsonArray(response, "songs");
-
-            if (songs == null || songs.size() == 0) {
-                System.out.println("No chart data available");
-                return;
-            }
-
-            List<Song> chartSongs = new ArrayList<>();
-            for (JsonElement songElement : songs) {
-                try {
-                    JsonObject songObj = songElement.getAsJsonObject();
-                    String title = safeGetString(songObj, "title");
-                    JsonObject artistObj = safeGetJsonObject(songObj, "primary_artist");
-                    String artistName = safeGetString(artistObj, "name");
-                    String id = safeGetString(songObj, "id");
-
-                    if (title == null || artistName == null || id == null) {
-                        continue;
-                    }
-
-                    Artist tempArtist = new Artist(
-                            artistName.toLowerCase().replaceAll("\\W+", "_"),
-                            "temp_pass",
-                            artistName,
-                            30,
-                            artistName.toLowerCase() + "@genius.com"
-                    );
-                    tempArtist.setVerified(true);
-
-                    Song song = new Song(
-                            title,
-                            "Loading lyrics...",
-                            Collections.singletonList(tempArtist),
-                            Genre.POP,
-                            new Date(),
-                            Integer.parseInt(id),
-                            safeGetString(songObj, "song_art_image_url")
-                    );
-
-                    chartSongs.add(song);
-                } catch (Exception e) {
-                    System.err.println("Error processing chart song: " + e.getMessage());
-                    continue;
+            if (charts != null && charts.has("response")) {
+                JsonArray songs = charts.getAsJsonObject("response").getAsJsonArray("songs");
+                if (songs != null && songs.size() > 0) {
+                    displayChartSongs(songs);
+                    return;
                 }
             }
-
-            if (chartSongs.isEmpty()) {
-                System.out.println("No valid chart songs found");
-                return;
-            }
-
-            for (int i = 0; i < chartSongs.size(); i++) {
-                Song song = chartSongs.get(i);
-                System.out.printf("%d. %s - %s%n",
-                        i + 1,
-                        song.getTitle(),
-                        song.getArtists().get(0).getName());
-            }
         } catch (Exception e) {
-            System.err.println("Error loading charts: " + e.getMessage());
+            // Silent catch - fall through to local data
         }
+
+        // Fallback to local data if API fails
+        showLocalTopSongs();
     }
-    private void searchSongs(String query) {
-        try {
-            // 1. Search songs using the service
-            List<Song> songs = songService.searchSongs(query);
 
-            // 2. Display results
-            if (songs.isEmpty()) {
-                System.out.println("No songs found matching '" + query + "'");
-                return;
+    private void displayChartSongs(JsonArray songs) {
+        System.out.println("\n🏆 Current Top Charts:");
+        printChartHeader();
+
+        chartsCache.clear();
+
+        for (int i = 0; i < songs.size(); i++) {
+            try {
+                JsonObject songObj = songs.get(i).getAsJsonObject();
+                String title = songObj.get("title").getAsString();
+                String artist = songObj.getAsJsonObject("primary_artist")
+                        .get("name").getAsString();
+                int views = songObj.has("stats")
+                        ? songObj.getAsJsonObject("stats").get("pageviews").getAsInt()
+                        : 0;
+
+                printSongRow(i+1, title, artist, views);
+                cacheSong(i+1, songObj, views);
+            } catch (Exception e) {
+                continue; // Skip invalid entries
             }
+        }
 
-            System.out.println("\nSongs matching '" + query + "':");
-            displaySongs(songs);
+        printChartFooter();
+        promptForSongSelection();
+    }
 
-            // 3. Allow song selection
-            System.out.print("Enter song number to view details (0 to go back): ");
+    private void printChartHeader() {
+        System.out.println("┌──────┬──────────────────────────────────────┬──────────────────────────┬──────────┐");
+        System.out.println("│ Rank │ Title                                │ Artist                   │ Views    │");
+        System.out.println("├──────┼──────────────────────────────────────┼──────────────────────────┼──────────┤");
+    }
+
+    private void printSongRow(int rank, String title, String artist, int views) {
+        System.out.printf("│ %4d │ %-36s │ %-24s │ %8s │\n",
+                rank,
+                truncate(title, 35),
+                truncate(artist, 25),
+                formatNumber(views));
+    }
+
+    private void printChartFooter() {
+        System.out.println("└──────┴──────────────────────────────────────┴──────────────────────────┴──────────┘");
+    }
+
+    private void cacheSong(int rank, JsonObject songObj, int views) {
+        String artist = songObj.getAsJsonObject("primary_artist")
+                .get("name").getAsString();
+
+        Song song = new Song(
+                songObj.get("title").getAsString(),
+                "Loading lyrics...",
+                Collections.singletonList(new Artist(
+                        artist.toLowerCase().replaceAll("\\W+", "_"),
+                        "temp_pass",
+                        artist,
+                        30,
+                        artist.toLowerCase() + "@genius.com"
+                )),
+                Genre.POP,
+                new Date(),
+                songObj.get("id").getAsInt(),
+                songObj.has("song_art_image_url")
+                        ? songObj.get("song_art_image_url").getAsString()
+                        : null
+        );
+        song.setViews(views);
+        chartsCache.put(rank, song);
+    }
+
+    private void promptForSongSelection() {
+        if (!chartsCache.isEmpty()) {
+            System.out.print("\nEnter song number to view details (0 to go back): ");
             int choice = readIntInput();
-
-            if (choice > 0 && choice <= songs.size()) {
-                // 4. Get full details for selected song
-                Song selectedSong = songs.get(choice - 1);
-
-                // 5. Fetch complete song data if needed
-                if (selectedSong.getLyrics() == null || selectedSong.getLyrics().equals("Loading lyrics...")) {
-                    JsonObject songDetails = geniusAPI.getSongDetails(selectedSong.getGeniusId());
-                    Song completeSong = songService.createSongFromApiResult(
-                            songDetails.getAsJsonObject("response").getAsJsonObject("song")
-                    );
-                    viewSongDetails(completeSong != null ? completeSong : selectedSong);
-                } else {
-                    viewSongDetails(selectedSong);
-                }
+            if (choice > 0 && choice <= chartsCache.size()) {
+                viewSongDetails(chartsCache.get(choice));
             }
-        } catch (Exception e) {
-            System.err.println("Error searching songs: " + e.getMessage());
         }
     }
+
+    private void showLocalTopSongs() {
+        try {
+            List<Song> songs = songService.getTopSongs(10);
+            if (songs.isEmpty()) {
+                System.out.println("No chart data available.");
+                return;
+            }
+
+            System.out.println("\n🏆 Local Top Songs:");
+            printChartHeader();
+
+            chartsCache.clear();
+
+            for (int i = 0; i < songs.size(); i++) {
+                Song song = songs.get(i);
+                String artist = song.getArtists().isEmpty()
+                        ? "Unknown"
+                        : song.getArtists().get(0).getName();
+
+                printSongRow(i+1, song.getTitle(), artist, song.getViews());
+                chartsCache.put(i+1, song);
+            }
+
+            printChartFooter();
+            promptForSongSelection();
+        } catch (Exception e) {
+            System.out.println("Unable to load song data.");
+        }
+    }
+
+    // Helper methods
+    private String truncate(String text, int length) {
+        if (text == null) return "";
+        return text.length() > length ? text.substring(0, length-3) + "..." : text;
+    }
+
+    private String formatNumber(int number) {
+        if (number >= 1_000_000) return String.format("%.1fM", number/1_000_000.0);
+        if (number >= 1_000) return String.format("%.1fK", number/1_000.0);
+        return String.valueOf(number);
+    }
+
+
     // ========== Search Methods ==========
     private void search() {
         System.out.println("\n--- Search ---");
@@ -875,36 +821,7 @@ public class CLI {
         }
     }
 
-//    private Artist createArtistFromApiResult(JsonObject artistData) {
-//        try {
-//            int geniusId = artistData.get("id").getAsInt();
-//            String name = artistData.get("name").getAsString();
-//
-//            // Create a username from the artist name
-//            String username = name.toLowerCase().replaceAll("[^a-z0-9]", "_");
-//
-//            // Create a new artist (note: password is placeholder)
-//            Artist artist = new Artist(
-//                    username,
-//                    "temp_pass_" + System.currentTimeMillis(),
-//                    name,
-//                    30, // default age
-//                    username + "@genius.com",
-//                    String.valueOf(geniusId)
-//            );
-//
-//            // Set artist image if available
-//            if (artistData.has("image_url")) {
-//                artist.setImageUrl(artistData.get("image_url").getAsString());
-//            }
-//
-//            artist.setVerified(true); // Assume API artists are verified
-//            return artist;
-//        } catch (Exception e) {
-//            System.err.println("Error creating artist from API data: " + e.getMessage());
-//            return null;
-//        }
-//    }
+
     // ========== Artist-Specific Methods ==========
     private void showArtistProfile() {
         Artist artist = (Artist) currentUser;
@@ -925,18 +842,38 @@ public class CLI {
             case 2 -> createNewAlbum();
         }
     }
+    private String getThumbnailUrlInput() {
+        while (true) {
+            String input = scanner.nextLine().trim();
 
+            if (input.isEmpty()) {
+                return null;
+            }
+
+            try {
+                new URL(input); // Validate URL format
+                return input;
+            } catch (MalformedURLException e) {
+                System.out.println("Invalid URL format. Example: https://example.com/image.jpg");
+            }
+        }
+    }
     private void createNewSong() {
         System.out.println("\n--- Create New Song ---");
         System.out.print("Title: ");
         String title = scanner.nextLine();
+
+        if (title == null || title.trim().isEmpty()) {
+            System.out.println("Title cannot be empty!");
+            return;
+        }
 
         System.out.println("Lyrics (enter 'END' on a new line to finish):");
         String lyrics = readMultilineInput();
 
         System.out.println("Genre: ");
         for (Genre genre : Genre.values()) {
-            System.out.println((genre.ordinal() + 1) + ". " + genre);
+            System.out.println((genre.ordinal() + 1) + ". " + genre.getDisplayName());
         }
         System.out.print("Select genre: ");
         int genreChoice = readIntInput();
@@ -956,24 +893,30 @@ public class CLI {
         Integer geniusId = readIntInput();
         if (geniusId == 0) geniusId = null;
 
-        System.out.print("Thumbnail URL (or leave blank): ");
-        String thumbnailUrl = scanner.nextLine();
-        if (thumbnailUrl.isBlank()) thumbnailUrl = null;
+        // Improved thumbnail URL handling
+        String thumbnailUrl = "https://images.genius.com/3b3485a28f2eb47c5ff3d7691e71bcba.1000x333x1.jpg";
 
-        Song song = songService.createSong(
-                title,
-                lyrics,
-                (Artist) currentUser,
-                genre,
-                releaseDate,
-                geniusId,
-                thumbnailUrl
-        );
 
-        if (song != null) {
-            System.out.println("Song created successfully!");
-        } else {
-            System.out.println("Failed to create song.");
+
+        try {
+            Song song = songService.createSong(
+                    title,
+                    lyrics,
+                    (Artist) currentUser,
+                    genre,
+                    releaseDate,
+                    geniusId,
+                    thumbnailUrl // Can be null
+            );
+
+            if (song != null) {
+                System.out.println("Song created successfully!");
+            } else {
+                System.out.println("Failed to create song.");
+            }
+        } catch (Exception e) {
+            System.out.println("Error creating song: " + e.getMessage());
+            e.printStackTrace();
         }
     }
     private void createNewAlbum() {
@@ -1116,7 +1059,7 @@ public class CLI {
     private void manageAlbum(Album album) {
         System.out.println("\n--- Managing Album: " + album.getTitle() + " ---");
         System.out.println("Release Date: " + album.getReleaseDate());
-        System.out.println("\nTracklist:");
+        System.out.println("\nTrack list:");
         List<Song> songs = album.getTracklist();
         
         if (songs.isEmpty()) {
@@ -1383,7 +1326,7 @@ public class CLI {
     }
 
     // ========== Helper Methods ==========
-// In CLI.java
+
     private void displaySongs(List<Song> songs) {
         if (songs == null || songs.isEmpty()) {
             System.out.println("No songs found.");
@@ -1421,16 +1364,5 @@ public class CLI {
         }
         return sb.toString().trim();
     }
-//    public void shutdown() throws InterruptedException {
-//        executorService.shutdown();
-//        try {
-//            Object TimeUnit;
-//            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
-//                executorService.shutdownNow();
-//            }
-//        } catch (InterruptedException e) {
-//            executorService.shutdownNow();
-//            Thread.currentThread().interrupt();
-//        }
-//    }
+
 }
