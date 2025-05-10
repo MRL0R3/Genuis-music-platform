@@ -41,11 +41,6 @@ public class GeniusAPIService {
      * @throws IOException If API request fails
      */
 
-//    public JsonObject search(String query) throws IOException {
-//        String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
-//        String url = API_BASE_URL + "/search?q=" + encodedQuery;
-//        return executeGetRequest(url);
-//    }
 
     public JsonObject searchArtists(String query) throws IOException {
         String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8);
@@ -88,10 +83,6 @@ public class GeniusAPIService {
 
     public JsonObject getArtistDetails(int artistId) throws IOException {
         String url = API_BASE_URL + "/artists/" + artistId;
-        return executeGetRequest(url);
-    }
-    public JsonObject getArtistSongs(int artistId) throws IOException {
-        String url = API_BASE_URL + "/artists/" + artistId + "/songs?sort=popularity&per_page=50";
         return executeGetRequest(url);
     }
 
@@ -151,15 +142,4 @@ public class GeniusAPIService {
         }
     }
 
-    /**
-     * Close HTTP client resources
-     */
-
-    public void close() {
-        try {
-            httpClient.close();
-        } catch (IOException e) {
-            System.err.println("Error closing HTTP client: " + e.getMessage());
-        }
-    }
 }
