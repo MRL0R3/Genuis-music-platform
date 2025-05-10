@@ -15,10 +15,10 @@ public class Artist extends Account {
     private List<Album> albums;
     private boolean verified;
 
+
     public Artist(String username, String password, String name, int age,
                   String email) {
         super(username, password, name, age, email, Role.ARTIST);
-        this.geniusId = geniusId;
         this.songs = new ArrayList<>();
         this.albums = new ArrayList<>();
         this.verified = false;
@@ -53,17 +53,10 @@ public class Artist extends Account {
     public void setImageUrl(String imageUrl) {
         this.imageUrl = imageUrl;
     }
-    public String getGeniusId() {
-        return geniusId;
-    }
 
-    public String getImageUrl() {
-        return imageUrl;
-    }
     public boolean isVerified() {
         return verified;
     }
-
 
 
 
