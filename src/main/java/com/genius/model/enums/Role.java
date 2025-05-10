@@ -39,14 +39,6 @@ public enum Role {
     }
 
     /**
-     * Gets the user-friendly display name of the role
-     * @return The display name
-     */
-    public String getDisplayName() {
-        return displayName;
-    }
-
-    /**
      * Parses a string into a Role enum value (case-insensitive)
      * @param roleString The string to parse
      * @return The corresponding Role, or null if no match
