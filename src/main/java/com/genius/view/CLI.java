@@ -749,26 +749,37 @@ public class CLI {
         String query = scanner.nextLine();
 
         System.out.println("\nSearch Categories:");
-        System.out.println("1. Songs");
+        System.out.println("1. Songs (Genius + Local)");
         System.out.println("2. Artists");
         System.out.print("Select category to search: ");
 
         int category = readIntInput();
         switch (category) {
             case 1 -> {
-                List<Song> songs = songService.searchSongs(query);
-                displaySongs(songs);
+                List<Song> songs = songService.searchSongs(query);  // Combined search
+                if (songs.isEmpty()) {
+                    System.out.println("No songs found matching your query.");
+                    return;
+                }
+
+                System.out.println("\nSongs matching '" + query + "':");
+                for (int i = 0; i < songs.size(); i++) {
+                    String artist = songs.get(i).getArtists().isEmpty()
+                            ? "Unknown"
+                            : songs.get(i).getArtists().get(0).getName();
+
+                    System.out.printf("%d. %s - %s%n", i + 1, songs.get(i).getTitle(), artist);
+                }
 
                 System.out.print("Enter song number to view details (0 to go back): ");
                 int choice = readIntInput();
                 if (choice > 0 && choice <= songs.size()) {
                     viewSongDetails(songs.get(choice - 1));
-                    }
                 }
+            }
 
             case 2 -> {
                 try {
-                    // Use songService's geniusAPI instance
                     JsonObject response = songService.getGeniusAPI().search(query);
                     JsonArray hits = response.getAsJsonObject("response").getAsJsonArray("hits");
 
@@ -785,14 +796,11 @@ public class CLI {
                                     name,
                                     30,
                                     username + "@genius.com"
-
                             );
                             artist.setGeniusId(String.valueOf(result.get("id").getAsInt()));
-
                             if (result.has("image_url")) {
                                 artist.setImageUrl(result.get("image_url").getAsString());
                             }
-
                             artist.setVerified(true);
                             artists.add(artist);
                         }
@@ -817,9 +825,11 @@ public class CLI {
                     System.err.println("Error searching artists: " + e.getMessage());
                 }
             }
+
             default -> System.out.println("Invalid category.");
         }
     }
+
 
 
     // ========== Artist-Specific Methods ==========
