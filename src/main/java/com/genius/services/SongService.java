@@ -119,6 +119,55 @@ public class SongService {
             System.err.println("Error processing song data: " + e.getMessage());
         }
     }
+    public List<Song> searchSongs(String query) {
+        List<Song> allResults = new ArrayList<>();
+
+        // Step 1: Genius API search
+        try {
+            JsonObject response = geniusAPI.search(query);
+            JsonArray hits = response.getAsJsonObject("response").getAsJsonArray("hits");
+
+            for (JsonElement hit : hits) {
+                JsonObject result = hit.getAsJsonObject().getAsJsonObject("result");
+                if (result != null && "song".equals(result.get("type").getAsString())) {
+                    Song song = createSongFromApiResult(result);
+                    if (song != null) {
+                        allResults.add(song);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("Error in Genius API search: " + e.getMessage());
+        }
+
+        // Step 2: Local search
+        List<Song> localMatches = database.getSongs().stream()
+                .filter(song -> song.getTitle().toLowerCase().contains(query.toLowerCase()) ||
+                        song.getArtists().stream().anyMatch(
+                                artist -> artist.getName().toLowerCase().contains(query.toLowerCase())))
+                .collect(Collectors.toList());
+
+        // Step 3: Merge results and deduplicate by title + artist combo
+        Set<String> seenKeys = new HashSet<>();
+        List<Song> finalResults = new ArrayList<>();
+
+        for (Song song : allResults) {
+            String key = song.getTitle().toLowerCase() + "-" + song.getArtists().get(0).getName().toLowerCase();
+            if (seenKeys.add(key)) {
+                finalResults.add(song);
+            }
+        }
+
+        for (Song song : localMatches) {
+            String key = song.getTitle().toLowerCase() + "-" + song.getArtists().get(0).getName().toLowerCase();
+            if (seenKeys.add(key)) {
+                finalResults.add(song);
+            }
+        }
+
+        return finalResults;
+    }
+
 
     public Song createSong(String title, String lyrics, Artist artist,
                            Genre genre, Date releaseDate, Integer geniusId,
@@ -227,26 +276,7 @@ public class SongService {
         return artist;
     }
 
-    public List<Song> searchSongs(String query) {
-        List<Song> songs = new ArrayList<>();
-        try {
-            JsonObject response = geniusAPI.search(query);
-            JsonArray hits = response.getAsJsonObject("response").getAsJsonArray("hits");
 
-            for (JsonElement hit : hits) {
-                JsonObject result = hit.getAsJsonObject().getAsJsonObject("result");
-                if (result != null && "song".equals(result.get("type").getAsString())) {
-                    Song song = createSongFromApiResult(result);
-                    if (song != null) {
-                        songs.add(song);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            System.err.println("Error in searchSongs: " + e.getMessage());
-        }
-        return songs;
-    }
 
     public Song createSongFromApiResult(JsonObject songData) {
         try {
